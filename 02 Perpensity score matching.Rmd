@@ -1,0 +1,70 @@
+---
+title: "02 Propensity Score matching"
+author: "Yuze Zheng"
+date: "2026-02-20"
+output: html_document
+---
+```{r setup, include=FALSE}
+library(dplyr)
+library(data.table)
+library(FNN)
+```
+Estimate Propensity Scores using logistic regression
+```{r}
+ps_model <- glm(outcome ~ L + trt + cal_time + cal_timesqr,
+                data = dt,
+                family = binomial(link = "logit"))
+# Predicted propensity sores
+dt$propensity_score <- predict(ps_model, type = "response")
+
+# View first rows
+head(dt)
+```
+
+Matching, here we did 1 to 1 matching, with replacement
+but this method takes too long so here 
+```{r}
+# Split treated and control groups
+treated <- dt %>% filter(trt == 1)
+control <- dt %>% filter(trt == 0)
+
+# For each treated unit, find closest control by propensity score
+#match_index <- sapply(treated$propensity_score, function(ps) {
+#  which.min(abs(control$propensity_score - ps))
+#})
+```
+
+so ther is the another K-nears-neib attempt use package RANN, which perform nearest neighbors for the Euclidean (L2) metric.
+```{r}
+control_ps  <- as.matrix(control$propensity_score)
+treated_ps  <- as.matrix(treated$propensity_score)
+
+nn_result <- get.knnx(
+  data = control_ps,      
+  query = treated_ps,     
+  k = 1
+)
+```
+
+```{r}
+matched_indices <- nn_result$nn.index
+matched_control <- control[matched_indices, ]
+matched_data <- rbind(
+  cbind(treated, group = "treated"),
+  cbind(matched_control, group = "control_matched")
+)
+```
+
+```{r}
+distances <- abs(treated_ps - control_ps[nn_result$nn.index])
+```
+
+
+```{r}
+# Combine matched data
+matched_data <- rbind(treated, matched_control)
+```
+```{r}
+
+```
+

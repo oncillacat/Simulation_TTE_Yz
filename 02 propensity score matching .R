@@ -1,7 +1,10 @@
 #02 propensity score matching draft 
 # Load libraries
 library(dplyr)
-s
+library(data.table)
+#setwd("/Users/yuzezheng/Library/CloudStorage/OneDrive-McGillUniversity/桌面/TTE")
+dt<-read.csv('Senario 1 simulated data 120226.csv')
+
 # Estimate Propensity Scores using logistic regression
 ps_model <- glm(Y ~ L + A + time + t2,
                 data = dt,
