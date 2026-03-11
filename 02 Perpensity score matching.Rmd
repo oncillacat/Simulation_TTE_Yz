@@ -13,7 +13,7 @@ library(fastglm)
 
 ```{r}
 logit_ps <- function(p) log(p / (1 - p))
-keep <- dt
+keep <- "dt"
 rm(list = setdiff(ls(), keep))
 ```
 
@@ -27,6 +27,10 @@ dt$propensity_score <- predict(ps_model,model.matrix(trt ~ L + cal_time + cal_ti
 
 # View first rows
 head(dt)
+```
+
+```{r}
+dt
 ```
 
 Matching, here we did 1 to 1 matching, with replacement

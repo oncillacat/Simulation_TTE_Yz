@@ -1,0 +1,115 @@
+---
+title: "03 Iverse probability weighting"
+author: "Yuze Zheng"
+date: "2026-02-20"
+output: html_document
+---
+```{r setup}
+library(fastglm)
+library(data.table)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+load('Simulation_TTE_Yz/dt+ps_matched+0309.RData')
+keep <- c('dt','ps_matched')
+rm(list = setdiff(ls(), keep))
+```
+
+# Step1: data cleaning remove all the trtment after intional treatment 
+```{r}
+dt_cleaned <- dt[, trt_time := which(trt == 1)[1], by = id]
+dt_cleaned <- dt_cleaned[cal_time <= trt_time | is.na(trt_time) == T]
+```
+
+```{r,fig.height=5,fig.width=6}
+dt_cleaned %>% select(trt, cal_time)%>% group_by(cal_time)%>% summarise(per_A = sum(trt)/100000) %>% 
+  plot(main = "Proportion of \n Treatment Initiation Overtime ",
+       sub = 'under assumption n = 100,000',
+       ylab =" Percentage of Initiation (%)",
+       xlab = "Time after eligible (Month)", ylim = c(0,1))
+```
+```{r}
+cat("the precent of treated individual in this dataset is",sum(dt_cleaned$trt)/nrow(dt_cleaned)*100, "%")
+```
+# Step 2: estimate population trt 
+```{r}
+mat_boot_numA <- model.matrix(~ cal_time + cal_timesqr, dt_cleaned)
+A <- dt_cleaned$trt
+numprobA <- fastglm(x = mat_boot_numA,
+                    y = A,
+                    family = binomial(link = "logit"))
+```
+
+#Step 3: estimate A by individual 
+```{r}
+mat_boot_denomA <- model.matrix( ~ L + cal_time + cal_timesqr, dt_cleaned)
+denomprobA <- fastglm(x = mat_boot_denomA,
+                        y = A,
+                        family = binomial(link = "logit"))
+```
+
+
+#Step4: weight estimation
+```{r}
+dt_cleaned$ipw.num <- predict(numprobA, mat_boot_numA, type = "response")
+dt_cleaned$ipw.denom <- predict(denomprobA, mat_boot_denomA, type = "response")
+dt_cleaned$wt <- ifelse(dt_cleaned$trt == 1,
+                        dt_cleaned$ipw.num / dt_cleaned$ipw.denom,
+                        (1 - dt_cleaned$ipw.num) / (1 - dt_cleaned$ipw.denom))
+```
+
+we can not visualize the result of IPW weighting here because there are too many control too less treatment
+
+#merge 
+```{r}
+df <- merge(
+  dt,
+  dt_cleaned[, .(id,cal_time,ipw.num,ipw.denom,wt)],
+  by = c("id", "cal_time"),
+  all.x = TRUE
+)
+```
+
+```{r}
+trt_wt <- dt_cleaned[cal_time == trt_time, .(id, wt_trt = wt)]
+df <- merge(df, trt_wt, by = "id", all.x = TRUE)
+df[cal_time > trt_time & is.na(wt), wt := wt_trt]
+df[, wt_trt := NULL]
+```
+
+```{r}
+trt_ipwn <- dt_cleaned[cal_time == trt_time, .(id, ipwn_trt = ipw.num)]
+df <- merge(df, trt_ipwn, by = "id", all.x = TRUE)
+df[cal_time > trt_time & is.na(ipw.num), ipw.num := ipwn_trt][, ipwn_trt := NULL]
+```
+
+```{r}
+trt_ipwdn <- dt_cleaned[cal_time == trt_time, .(id, ipwdn_trt = ipw.denom)]
+df <- merge(df, trt_ipwdn, by = "id", all.x = TRUE)
+df[cal_time > trt_time & is.na(ipw.denom), ipw.denom := ipwdn_trt][, ipwdn_trt := NULL]
+```
+
+
+```{r}
+labs <- paste("A family was part of the:", c("treatment groups", "control group"))
+df %>%
+  mutate(trt = ifelse(trt == 1, labs[1], labs[2])) %>%
+  ggplot(aes(x = ipw.num)) +
+  geom_histogram(color = "white") +
+  facet_wrap(~trt) +
+  xlab("Probability of treatment and control groups") +
+  theme_bw()
+```
+
+
+
+```{r}
+ggplot(df, aes(x = wt, fill = as.factor(trt))) +
+  geom_density(alpha = 0.5, colour = "grey50") +
+  geom_rug() +
+  ggtitle("Distribution of inverse probability weights")
+```
+
+

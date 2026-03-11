@@ -103,7 +103,7 @@ dt = dt %>%
 
 ```{r,fig.height=5,fig.width=6}
 dt %>% select(A, time)%>% group_by(time)%>% summarise(per_A = sum(A)/nsim) %>% 
-  plot(main = "Percentage of Inititation by time ",
+  plot(main = "Cumulative Proportion of \n Treatment Initiation Overtime ",
        ylab =" Percentage of Initiation (%)",
        xlab = "Time after eligible (Month)", ylim = c(0,1))
 ```
@@ -135,7 +135,7 @@ dt %>%
 ```{r,fig.height=5,fig.width=6}
 dt <- dt[time < event_time | is.na(event_time) == T][, event_time := NULL]
 dt %>% select(A, time)%>% group_by(time)%>% summarise(per_A = sum(A)/nsim) %>% 
-  plot(main = "Percentage of Inititation by time ",sub = "after cencoring inidivial after they experience heart failure",
+  plot(main = "cumulative cumulative proportion of treatment initiation overtime",sub = "after cencoring inidivial after they experience heart failure",
        ylab =" Percentage of Initiation (%)",
        xlab = "Time after eligiavble (Month)", ylim = c(0,1))
 ```
