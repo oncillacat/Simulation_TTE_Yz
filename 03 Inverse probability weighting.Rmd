@@ -12,7 +12,7 @@ library(dplyr)
 ```
 
 ```{r}
-load('Simulation_TTE_Yz/dt+ps_matched+0309.RData')
+load('dt+ps_matched+0309.RData')
 keep <- c('dt','ps_matched')
 rm(list = setdiff(ls(), keep))
 ```
@@ -66,7 +66,7 @@ we can not visualize the result of IPW weighting here because there are too many
 ```{r}
 df <- merge(
   dt,
-  dt_cleaned[, .(id,cal_time,ipw.num,ipw.denom,wt)],
+  dt_cleaned[, .(id,cal_time,wt)],
   by = c("id", "cal_time"),
   all.x = TRUE
 )
@@ -80,36 +80,15 @@ df[, wt_trt := NULL]
 ```
 
 ```{r}
-trt_ipwn <- dt_cleaned[cal_time == trt_time, .(id, ipwn_trt = ipw.num)]
-df <- merge(df, trt_ipwn, by = "id", all.x = TRUE)
-df[cal_time > trt_time & is.na(ipw.num), ipw.num := ipwn_trt][, ipwn_trt := NULL]
-```
-
-```{r}
-trt_ipwdn <- dt_cleaned[cal_time == trt_time, .(id, ipwdn_trt = ipw.denom)]
-df <- merge(df, trt_ipwdn, by = "id", all.x = TRUE)
-df[cal_time > trt_time & is.na(ipw.denom), ipw.denom := ipwdn_trt][, ipwdn_trt := NULL]
-```
-
-
-```{r}
-labs <- paste("A family was part of the:", c("treatment groups", "control group"))
-df %>%
-  mutate(trt = ifelse(trt == 1, labs[1], labs[2])) %>%
-  ggplot(aes(x = ipw.num)) +
-  geom_histogram(color = "white") +
-  facet_wrap(~trt) +
-  xlab("Probability of treatment and control groups") +
-  theme_bw()
-```
-
-
-
-```{r}
 ggplot(df, aes(x = wt, fill = as.factor(trt))) +
   geom_density(alpha = 0.5, colour = "grey50") +
   geom_rug() +
   ggtitle("Distribution of inverse probability weights")
 ```
+
+```{r}
+dt_IPW <- df
+```
+
 
 

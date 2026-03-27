@@ -1,0 +1,118 @@
+---
+title: "03 Cox model New"
+author: "Yuze Zheng"
+date: "2026-03-27"
+output: html_document
+---
+
+# ── Build event time look up ──────────────────────────────────────────────
+# For each person, find the first cal_time where outcome == 1.
+# If they never have an outcome, event_time is NA and had_event is FALSE.
+# We use this in Section 4 to build follow-up time after matching.
+```{r}
+event_lookup <- dt %>%
+  group_by(id) %>%
+  summarise(
+    event_time = min(cal_time[outcome == 1], na.rm = TRUE),
+    had_event  = any(outcome == 1)
+  ) %>%
+  mutate(event_time = ifelse(is.infinite(event_time), NA_real_, event_time))
+
+# ── Get each person's treatment initiation time from the full dataset ────────
+# trt_time = the first cal_time where new_initiator == 1
+# For people who never initiate, this will be NA
+
+trt_lookup <- df %>%
+  group_by(id) %>%
+  summarise(
+    trt_start_time = ifelse(
+      any(new_initiator == 1),
+      min(cal_time[new_initiator == 1]),
+      NA_real_
+    )
+  )
+```
+
+# ── 4a. Join event information onto the matched dataset ──────────────────────
+# event_lookup tells us WHEN each person had their outcome (if at all).
+# We join by id so each row in ps_matched gets that person's event info.
+```{r}
+ps_matched <- ps_matched %>%
+  left_join(event_lookup, by = "id") %>%
+  left_join(trt_lookup,   by = "id")
+```
+
+# ── 4b. Compute follow-up time and outcome flag ──────────────────────────────
+```{r}
+max_time <- 60 # end of study = last observed time point
+
+ps_matched <- ps_matched %>%
+  mutate(
+
+    # For CONTROLS: censor at whichever comes first —
+    #   their treatment initiation, their outcome, or study end
+    # For TREATED:  their protocol was "initiate at index date" — 
+    #   no further censoring needed, follow until outcome or study end
+
+    pp_censor_time = ifelse(
+      trt == 0,
+      trt_start_time,   # controls: censor when they start treatment
+      NA_real_          # treated:  no per-protocol censoring
+    ),
+
+    # end_time = earliest of: outcome, per-protocol censor, study end
+    # pmin() with na.rm=TRUE ignores NA (e.g. treated people have no
+    # pp_censor_time, never-treated controls have no trt_start_time)
+    end_time = pmin(
+      ifelse(had_event, event_time, max_time),
+      ifelse(!is.na(pp_censor_time), pp_censor_time, max_time),
+      na.rm = TRUE
+    ),
+
+    # Reset clock to zero from index date
+    follow_up = end_time - index_date,
+
+    # Event only counts if it happened AFTER index date
+    # AND before or at the per-protocol censoring time
+    outcome_flag = as.integer(
+      had_event &
+      event_time > index_date &
+      (trt == 1 | is.na(trt_start_time) | event_time <= trt_start_time)
+    )
+  )
+```
+
+# ── 4c. Quick sanity checks ──────────────────────────────────────────────────
+```{r}
+# follow_up should all be >= 0
+stopifnot(all(ps_matched$follow_up >= 0))
+
+# Every pair_id should appear exactly twice (one treated, one control)
+pair_counts <- ps_matched %>% count(pair_id)
+stopifnot(all(pair_counts$n == 2))
+
+# Check event rates by group
+ps_matched %>%
+  group_by(trt) %>%
+  summarise(
+    n          = n(),
+    n_events   = sum(outcome_flag),
+    event_rate = mean(outcome_flag)
+  )
+```
+
+```{r}
+# Check how many controls were per-protocol censored
+ps_matched %>%
+  filter(trt == 0) %>%
+  summarise(
+    n_total          = n(),
+    n_pp_censored    = sum(!is.na(trt_start_time) &
+                           trt_start_time > index_date &
+                           trt_start_time <= max_time),
+    pct_pp_censored  = mean(!is.na(trt_start_time) &
+                            trt_start_time > index_date &
+                            trt_start_time <= max_time) * 100
+  )
+```
+
