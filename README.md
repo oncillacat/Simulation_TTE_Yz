@@ -9,7 +9,7 @@ Data_generation_report.rmd
 
 03 new cox model
 
-04 Inverse probability weighting.rmd(to be done)
+04 Inverse probability weighting.rmd
 
 This project aim to build this as a reproducible package consist of .R files, but this part is still on working progress as the last time update
 so please do not run .R files in this project for now.
