@@ -4,6 +4,9 @@ author: "Yuze Zheng"
 date: "2026-03-27"
 output: html_document
 ---
+```{r}
+load('after_new_02.RData')
+```
 
 # ── Build event time look up ──────────────────────────────────────────────
 # For each person, find the first cal_time where outcome == 1.
@@ -116,3 +119,50 @@ ps_matched %>%
   )
 ```
 
+# ── 5a. Fit the stratified Cox model ─────────────────────────────────────────
+this is more itt approach
+Surv(follow_up, outcome_flag) — the outcome variable
+trt                           — the exposure (1=treated, 0=control)
+strata(pair_id)               — compares within pairs, not across them
+cluster(id)                   — corrects SEs for reused controls
+```{r}
+library(survival)
+cox_model <- coxph(
+  Surv(follow_up, outcome_flag) ~ trt + strata(pair_id) + cluster(id),
+  data   = ps_matched,
+  ties   = "efron"    # Efron approximation handles tied event times well
+)
+
+summary(cox_model)
+```
+# ── 5b. Extract the hazard ratio and confidence interval ─────────────────────
+#* exp(coef) gives the hazard ratio.
+#* A HR < 1 means treatment reduces the hazard of the outcome.
+#* A HR > 1 means treatment increases it.
+```{r}
+hr_table <- broom::tidy(cox_model, exponentiate = TRUE, conf.int = TRUE) %>%
+  select(term, estimate, conf.low, conf.high, p.value)
+
+print(hr_table)
+```
+# ── 5c. Plot Kaplan-Meier survival curves by treatment group ─────────────────
+#* This gives a visual check — do the curves separate in the expected direction?
+```{r}
+km_fit <- survfit(
+  Surv(follow_up, outcome_flag) ~ trt,
+  data = ps_matched
+)
+
+plot(
+  km_fit,
+  col     = c("steelblue", "tomato"),
+  lwd     = 2,
+  xlab    = "Months since index date",
+  ylab    = "Probability of remaining event-free",
+  main    = "Kaplan-Meier curves after PSM"
+)
+legend("bottomleft",
+       legend = c("Control", "Treated"),
+       col    = c("steelblue", "tomato"),
+       lwd    = 2)
+```
