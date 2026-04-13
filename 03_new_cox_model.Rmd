@@ -6,8 +6,16 @@ output: html_document
 ---
 ```{r}
 load('after_new_02.RData')
+keep <- c("dt","ps_matched","df")
+rm(list = setdiff(ls(), keep))
 ```
 
+```{r setup, includ`e=FALSE}
+library(dplyr)
+library(data.table)
+library(FNN)
+library(fastglm)
+```
 # ── Build event time look up ──────────────────────────────────────────────
 # For each person, find the first cal_time where outcome == 1.
 # If they never have an outcome, event_time is NA and had_event is FALSE.
@@ -71,17 +79,30 @@ ps_matched <- ps_matched %>%
       ifelse(!is.na(pp_censor_time), pp_censor_time, max_time),
       na.rm = TRUE
     ),
-
+    
+    # When does this person's follow-up end?
+    # If they had an event, it ends at event_time.
+    # If no event, it ends at the last study time point.
+    end_ITT = ifelse(had_event, event_time, max_time),
+    
     # Reset clock to zero from index date
-    follow_up = end_time - index_date,
-
+    follow_up = end_time - index_date+1,
+    
+    # How long were they followed FROM their index date?
+    # This resets the clock to zero at the index date.
+    follow_ITT = end_ITT - index_date+1,
+    
     # Event only counts if it happened AFTER index date
     # AND before or at the per-protocol censoring time
     outcome_flag = as.integer(
       had_event &
-      event_time > index_date &
       (trt == 1 | is.na(trt_start_time) | event_time <= trt_start_time)
-    )
+    ),
+    # Did the event happen AFTER the index date?
+    # An event before the index date doesn't count — the person
+    # was assigned to this pair after their event, which is impossible
+    # in reality and only happens due to matching on a later time point.
+    outcome_ITT = as.integer(had_event)
   )
 ```
 
@@ -89,6 +110,7 @@ ps_matched <- ps_matched %>%
 ```{r}
 # follow_up should all be >= 0
 stopifnot(all(ps_matched$follow_up >= 0))
+stopifnot(all(ps_matched$follow_ITT >= 0))
 
 # Every pair_id should appear exactly twice (one treated, one control)
 pair_counts <- ps_matched %>% count(pair_id)
@@ -119,7 +141,7 @@ ps_matched %>%
   )
 ```
 
-# ── 5a. Fit the stratified Cox model ─────────────────────────────────────────
+# ── 5a. Fit the stratified Cox model AT─────────────────────────────────────────
 this is more itt approach
 Surv(follow_up, outcome_flag) — the outcome variable
 trt                           — the exposure (1=treated, 0=control)
@@ -129,8 +151,7 @@ cluster(id)                   — corrects SEs for reused controls
 library(survival)
 cox_model <- coxph(
   Surv(follow_up, outcome_flag) ~ trt + strata(pair_id) + cluster(id),
-  data   = ps_matched,
-  ties   = "efron"    # Efron approximation handles tied event times well
+  data   = ps_matched
 )
 
 summary(cox_model)
@@ -159,10 +180,58 @@ plot(
   lwd     = 2,
   xlab    = "Months since index date",
   ylab    = "Probability of remaining event-free",
-  main    = "Kaplan-Meier curves after PSM"
+  main    = "Kaplan-Meier curves after PSM (AT)"
 )
 legend("bottomleft",
        legend = c("Control", "Treated"),
        col    = c("steelblue", "tomato"),
        lwd    = 2)
 ```
+
+# ── 6a. Fit the stratified Cox model ITT─────────────────────────────────────────
+```{r}
+library(survival)
+cox_model_ITT <- coxph(
+  Surv(follow_ITT, outcome_ITT) ~ trt + strata(pair_id) + cluster(id),
+  data   = ps_matched
+)
+
+summary(cox_model)
+```
+
+# ── 6b. Extract the hazard ratio and confidence interval ─────────────────────
+#* exp(coef) gives the hazard ratio.
+#* A HR < 1 means treatment reduces the hazard of the outcome.
+#* A HR > 1 means treatment increases it.
+```{r}
+hr_table_ITT <- broom::tidy(cox_model_ITT, exponentiate = TRUE, conf.int = TRUE) %>%
+  select(term, estimate, conf.low, conf.high, p.value)
+
+print(hr_table)
+```
+# ── 6c. Plot Kaplan-Meier survival curves by treatment group ─────────────────
+#* This gives a visual check — do the curves separate in the expected direction?
+```{r}
+km_fit_ITT <- survfit(
+  Surv(follow_ITT, outcome_ITT) ~ trt,
+  data = ps_matched
+)
+
+plot(
+  km_fit_ITT,
+  col     = c("steelblue", "tomato"),
+  lwd     = 2,
+  xlab    = "Months since index date",
+  ylab    = "Probability of remaining event-free",
+  main    = "Kaplan-Meier curves after PSM (ITT)"
+)
+legend("bottomleft",
+       legend = c("Control", "Treated"),
+       col    = c("steelblue", "tomato"),
+       lwd    = 2)
+```
+
+```{r}
+res_trad <-list(ps_matched,df,cox_model,cox_model_ITT,hr_table,hr_table_ITT,km_fit,km_fit_ITT,event_lookup,trt_lookup)
+```
+

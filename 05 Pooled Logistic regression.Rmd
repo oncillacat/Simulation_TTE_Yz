@@ -1,0 +1,120 @@
+---
+title: "05 Pooled Logistic regression"
+author: "Yuze Zheng"
+date: "2026-04-09"
+output: html_document
+---
+
+```{r setup}
+library(fastglm)
+library(data.table)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+load('dt+res_trad+dt_IPW.RData')
+keep <- c('dt','res_trad','dt_IPW')
+rm(list = setdiff(ls(), keep))
+```
+
+# ── build logistic regression  ──────────────────────────────────────────────
+```{r}
+# Create the design (model) matrix for regression
+# Includes:
+# - trt: treatment indicator
+# - cal_time: time variable
+# - cal_timesqr: squared time (to model non-linearity)
+# - Interaction terms between treatment and time variables
+mat_boot <- model.matrix(
+  ~ trt + cal_time + cal_timesqr + trt:cal_time + trt:cal_timesqr ,
+  dt_IPW
+)
+
+# Define the outcome variable 
+Y <- dt_IPW$outcome
+# Extract weights (likely inverse probability weights)
+W <- dt_IPW$wt
+
+# Fit a weighted logistic regression model using fastglm
+# - x: design matrix
+# - y: binary outcome
+# - weights: observation weights
+# - family: binomial with logit link (i.e., logistic regression)
+model <- fastglm(x = mat_boot,
+                   y = Y,
+                   weights = W,
+                   family = binomial(link = "logit"))
+  
+```
+
+# ── risk estimation  ──────────────────────────────────────────────
+```{r}
+# -------------------------------
+# Step 1: Create counterfactual datasets
+# -------------------------------
+
+# Create a new dataset representing the "no treatment" strategy
+# for each time point
+# Dataset assuming no treatment (trt = 0) across all time points
+time_points = 0:59
+notrt_data <- data.table(
+    trt = 0L,
+    cal_time = time_points,
+    cal_timesqr = time_points^2
+  )
+# Dataset assuming treatment (trt = 1) across all time points 
+trt_data <- data.table(
+    trt = 1L,
+    cal_time = time_points,
+    cal_timesqr = time_points^2
+  )
+```
+
+# -------------------------------
+# Step 2: Construct model matrices
+# -------------------------------
+```{r}
+# Build design matrices consistent with the fitted regression model
+# Includes main effects and interaction terms (time-varying treatment effect)
+mat_notrt <- model.matrix(~ trt + cal_time + cal_timesqr + trt:cal_time + trt:cal_timesqr,
+                            notrt_data)
+mat_trt <- model.matrix(~ trt + cal_time + cal_timesqr + trt:cal_time + trt:cal_timesqr,
+                          trt_data)
+# -------------------------------
+# Step 3: Predict outcome probabilities
+# -------------------------------
+# Predict discrete-time risk (probability of outcome) at each time point
+# under each treatment strategy using the fitted model
+notrt_data$risk <- predict(model, mat_notrt, type = "response")
+trt_data$risk <- predict(model, mat_trt, type = "response")
+```
+
+```{r}
+# For the no-treatment group and treatment group
+  # 1. calculate the average predicted risk at each time point
+  # 2. accumulate those risks over time to get cumulative incidence
+  # 3. multiply by 100 to express as a percentage
+notrt_risk <- notrt_data[, .(risk_notrt = mean(risk)), by = cal_time
+][, cuminc_notrt := cumsum(risk_notrt) * 100]
+  
+trt_risk <- trt_data[, .(risk_trt = mean(risk)), by = cal_time
+][, cuminc_trt := cumsum(risk_trt) * 100]
+  
+```
+
+```{r}
+# -------------------------------
+# Step 5: Compare treatment strategies
+# -------------------------------
+
+# Merge results by time
+risk_results <- merge(trt_risk, notrt_risk, by = "cal_time")
+  risk_results[, `:=`(
+    risk_ratio = cuminc_trt / cuminc_notrt,
+    risk_diff = cuminc_trt - cuminc_notrt
+  )
+  ][, c("risk_trt", "risk_notrt") := NULL]
+  
+```
+

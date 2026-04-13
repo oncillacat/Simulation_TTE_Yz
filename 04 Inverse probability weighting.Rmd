@@ -1,5 +1,5 @@
 ---
-title: "03 Iverse probability weighting"
+title: "04 Iverse probability weighting"
 author: "Yuze Zheng"
 date: "2026-02-20"
 output: html_document
@@ -12,8 +12,8 @@ library(dplyr)
 ```
 
 ```{r}
-load('dt+ps_matched+0309.RData')
-keep <- c('dt','ps_matched')
+load('dt+res_trad.RData')
+keep <- c('dt','res_trad')
 rm(list = setdiff(ls(), keep))
 ```
 
