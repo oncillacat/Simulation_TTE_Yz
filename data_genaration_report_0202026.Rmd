@@ -107,6 +107,7 @@ dt %>% select(A, time)%>% group_by(time)%>% summarise(per_A = sum(A)/nsim) %>%
        ylab =" Percentage of Initiation (%)",
        xlab = "Time after eligible (Month)", ylim = c(0,1))
 ```
+
 ```{r}
 # Step 2: Merge in individual-level covariates (L, U2, A)
 dt[, Ystar := rbinom(nsim*K, 1, plogis(
@@ -117,6 +118,7 @@ dt[, Ystar := rbinom(nsim*K, 1, plogis(
 ][, event_time := which(Ystar == 1)[1], by = id # Step 6: Censor at first Ystar per individual
 ]
 ```
+
 ```{r,fig.height=5,fig.width=6}
 dt %>%  
   filter(!is.na(event_time))%>% 

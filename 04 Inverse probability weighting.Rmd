@@ -72,6 +72,7 @@ df <- merge(
 )
 ```
 
+#fill all NA to the time they are getting treated 
 ```{r}
 trt_wt <- dt_cleaned[cal_time == trt_time, .(id, wt_trt = wt)]
 df <- merge(df, trt_wt, by = "id", all.x = TRUE)

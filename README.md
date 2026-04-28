@@ -1,7 +1,7 @@
 # Simulation_TTE_Yz
 Simulation study for target trail emulation 
 
-To process of running this program is to star with 
+To process of running this program is to start with 
 
 Data_generation_report.rmd 
 
@@ -11,5 +11,8 @@ Data_generation_report.rmd
 
 04 Inverse probability weighting.rmd
 
+05 pooled logistic regression
+
+Now all those information and code in all these 5 files are in the pipeline.R, in the format of function.
 This project aim to build this as a reproducible package consist of .R files, but this part is still on working progress as the last time update
 so please do not run .R files in this project for now.
