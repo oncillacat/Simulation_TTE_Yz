@@ -1,0 +1,193 @@
+---
+title: "02 Propensity Score matching"
+author: "Yuze Zheng"
+date: "2026-02-26"
+output: html_document
+---
+```{r setup, includ`e=FALSE}
+library(dplyr)
+library(data.table)
+library(FNN)
+library(fastglm)
+```
+
+```{r}
+keep <- "dt"
+rm(list = setdiff(ls(), keep))
+logit_ps <- function(p) log(p / (1 - p))
+```
+# ── Flag new initiators ──────────────────────────────────────────────────
+new_initiator == 1 only in the very first month a person starts treatment.
+shift(trt, 1, fill=0) looks at the PREVIOUS row's trt value for each person.
+If trt just flipped from 0 to 1, this is a new initiation.
+```{r}
+df <- dt %>%
+  group_by(id) %>%
+  arrange(cal_time) %>%
+  mutate(
+    new_initiator = as.integer(trt == 1 & lag(trt, 1, default = 0) == 0)
+  ) %>%
+  ungroup()
+# View first rows
+head(df)
+
+# Quick check — each person should have at most 1 new_initiator row
+df %>%
+  group_by(id) %>%
+  summarise(n_init = sum(new_initiator)) %>%
+  count(n_init)
+```
+
+# ── Fit one logistic model with time included ────────────────────────────
+# We model the probability of being a NEW initiator at each time point.
+# Covariates: L (baseline confounder), cal_time, cal_timesqr (allows
+# the initiation probability to curve over time, not just be linear).
+#
+# We fit on all rows where the person is still untreated — because only
+# untreated people are "at risk" of initiating.
+```{r}
+ps_data <- df %>% filter(trt == 0 | new_initiator == 1)
+
+ps_model <- glm(
+  new_initiator ~ L + cal_time + cal_timesqr,
+  data   = ps_data,
+  family = binomial(link = "logit")
+)
+```
+
+```{r}
+#prediction
+ps_data$ps <- predict(ps_model, newdata = ps_data, type = "response")
+#data set merging
+df <- df %>%
+  left_join(ps_data %>% select(id, cal_time, ps), by = c("id", "cal_time"))
+# Quick check — PS should be non-missing for all untreated and new initiator rows
+summary(is.na(df %>% filter(trt == 0 | new_initiator == 1) %>% select(ps)))
+```
+# loop over & mathching 
+Matching, here we did 1 to 1 matching, with replacement
+but this method takes too long so here 
+so ther is the another K-nears-neib attempt use package RANN, which perform nearest neighbors for the Euclidean (L2) metric.
+Here is it is a 1 to 1 matching with replacement
+Cliper 
+Here we use 
+$$
+\text{caliper} = 0.2 \times \operatorname{SD}\big(\operatorname{logit}(PS)\big)
+$$
+citation:Austin, Peter C. "Optimal caliper widths for propensity‐score matching when estimating differences in means and differences in proportions in observational studies." Pharmaceutical statistics 10.2 (2011): 150-161.
+```{r}
+matched_list  <- list()   # stores matched pairs from each time point
+pair_counter  <- 0        # gives each pair a unique number
+
+for (t in sort(unique(df$cal_time))) {
+  
+  # Slice the dataset to just this time point
+  dat <- df %>% filter(cal_time == t)
+  
+  # ── Treated pool: new initiators only ──────────────────────────────────────
+  # These are the people who just started treatment this month.
+  # They get an index date of t.
+  treated <- dat %>% filter(new_initiator == 1)
+  
+  # If nobody starts treatment this month, skip to the next month
+  if (nrow(treated) == 0) next
+  
+  # ── Control pool: all three eligibility conditions ─────────────────────────
+  # Condition 1 — trt == 0:        not yet treated
+  # Condition 2 — no outcome yet:  still at risk of the outcome
+  # Condition 3 — not reused:      not already serving as a control
+  control <- dat %>%
+    filter(
+      trt == 0,
+      is.na(outcome) | outcome == 0
+    )
+  
+  # If no eligible controls this month, skip
+  if (nrow(control) == 0) next
+  
+  # ── Caliper ────────────────────────────────────────────────────────────────
+  # The caliper is 0.2 × SD of the logit-PS across both groups at this
+  # time point. This is the Austin (2011) recommendation.
+  # We compute it fresh each month because the PS distribution changes.
+  all_ps   <- c(treated$ps, control$ps)
+  sd_logit <- sd(logit_ps(all_ps))
+  
+  # Guard: if SD is 0 or NA (can happen at very late time points with tiny
+  # pools), skip this month — matching would be meaningless
+  if (is.na(sd_logit) || sd_logit == 0) next
+  
+  caliper <- 0.2 * sd_logit
+  
+  # ── Nearest-neighbour matching ─────────────────────────────────────────────
+  # get.knnx finds the single nearest control (k=1) for each treated person,
+  # measured by Euclidean distance on the PS scale.
+  treated_ps <- as.matrix(treated$ps)
+  control_ps <- as.matrix(control$ps)
+  
+  nn_result  <- get.knnx(data = control_ps, query = treated_ps, k = 1)
+  # this is a one to one matching we will try 1:2 -1:3 later 
+  
+  # ── Caliper filter ─────────────────────────────────────────────────────────
+  # Compute distance between each treated person and their proposed match.
+  # as.vector() on both sides prevents the matrix recycling bug we discussed.
+  matched_ctrl_ps <- as.vector(control_ps[nn_result$nn.index, , drop = TRUE])
+  distances       <- abs(as.vector(treated_ps) - matched_ctrl_ps)
+  
+  # Keep only pairs whose PS difference is within the caliper
+  valid <- distances <= caliper
+  if (sum(valid) == 0) next # skip to next month of
+  
+  # ── Extract valid matched pairs ────────────────────────────────────────────
+  matched_treated <- treated[valid, ]
+  matched_control <- control[nn_result$nn.index[valid], ]
+  
+  # ── Assign pair IDs ────────────────────────────────────────────────────────
+  # Each matched pair gets a unique pair_id.
+  # This is essential for strata() in the Cox model later.
+  n_pairs      <- nrow(matched_treated)
+  new_pair_ids <- paste0("pair_", (pair_counter + 1):(pair_counter + n_pairs))
+  pair_counter <- pair_counter + n_pairs
+  
+  matched_treated$pair_id    <- new_pair_ids
+  matched_control$pair_id    <- new_pair_ids
+  
+  # ── Record the index date for both members of each pair ───────────────────
+  # Both people share the same index date — the month the treated person
+  # initiated treatment. This is what they will reset their follow-up to.
+  matched_treated$index_date <- t
+  matched_control$index_date <- t
+  
+  # ── Save this month's pairs ────────────────────────────────────────────────
+  matched_list[[as.character(t)]] <- rbind(matched_treated, matched_control)
+}
+
+```
+
+results check history gram
+```{r}
+# ── Combine matched_list into one dataframe ───────────────────────────────
+ps_matched <- bind_rows(matched_list)
+
+# ── 2×2 PS overlap check ─────────────────────────────────────────────────
+par(mfrow = c(2, 2))
+
+df %>% filter(trt == 0) %>% pull(ps) %>%
+  hist(main = "Raw Control",     xlab = "Propensity Score", col = "white")
+
+df %>% filter(trt == 1) %>% pull(ps) %>%
+  hist(main = "Raw Treated",     xlab = "Propensity Score", col = "white")
+
+ps_matched %>% filter(trt == 0) %>% pull(ps) %>%
+  hist(main = "Matched Control", xlab = "Propensity Score", col = "grey")
+
+ps_matched %>% filter(trt == 1) %>% pull(ps) %>%
+  hist(main = "Matched Treated", xlab = "Propensity Score", col = "grey")
+```
+```{r}
+ps_matched %>% arrange(id,cal_time)
+# ── 3c. Combine all months into one dataset ──────────────────────────────────
+
+cat("Total matched pairs:", pair_counter, "\n")
+cat("Total rows in matched dataset:", nrow(ps_matched), "\n")
+```
+

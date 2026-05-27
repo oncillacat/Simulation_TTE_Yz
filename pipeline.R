@@ -23,15 +23,16 @@ N_BOOT   <- 100   # number of bootstrap iterations
 generate_data <- function(
     nsim     = 100000,
     K        = 60,
-    A_params = c(-1.5, 0, -4.8, 0),       # beta_0_A, beta_L_A, beta_t_A, beta_t2_A
-    Y_params = c(-6, 0.01, 0, 0, 0, 0),   # beta_0_Y .. beta_t2A_Y
-    seed     = 42
+    A_params = c(-1.5, 0,5, -4.8, 0),       # beta_0_A, beta_L_A, beta_t_A, beta_t2_A
+    Y_params = c(-6, 0.01, 0.5, 0, 0, 0,0)  # beta_0_Y , beta_t_Y  ,beta_L_Y,
+                                            # beta_t2_Y ,beta_A_Y,beta_tA_Y, beta_t2A_Y
 ) {
   beta_0_A  <- A_params[1]; beta_L_A  <- A_params[2]
   beta_t_A  <- A_params[3]; beta_t2_A <- A_params[4]
   beta_0_Y  <- Y_params[1]; beta_t_Y  <- Y_params[2]
-  beta_t2_Y <- Y_params[3]; beta_A_Y  <- Y_params[4]
-  beta_tA_Y <- Y_params[5]; beta_t2A_Y<- Y_params[6]
+  beta_L_Y <- Y_params[3]; beta_t2_Y  <- Y_params[4]
+  beta_A_Y <- Y_params[5]; beta_tA_Y<- Y_params[6]
+  beta_t2A_Y <- Y_params[7]
 
   dt <- CJ(id = 1:nsim, time = 0:(K - 1))
 
@@ -194,7 +195,7 @@ run_cox <- function(ps_matched, df) {
 
 # ── STAGE 4: IPW ──────────────────────────────────────────────────────────────
 run_ipw_boot <- function(boot_dt) {
-
+  #PP 
   dat <- boot_dt   # IMPORTANT: data.table modifies by reference without this
   
   dt_cleaned <- dat[, trt_time := which(trt == 1)[1], by = id]
@@ -212,18 +213,42 @@ run_ipw_boot <- function(boot_dt) {
   dt_cleaned[, wt := ifelse(trt == 1,
                       ipw_num / ipw_denom,
                       (1 - ipw_num) / (1 - ipw_denom))]
-  df <- merge(dat,dt_cleaned[, .(boot_id,cal_time,wt)],by = c("cal_time","boot_id"), all.x = T, allow.cartesian = T)
-  trt_wt <- dt_cleaned[cal_time == trt_time-1, .(boot_id, wt_trt = wt)]
-  df <- merge(df, trt_wt, by = "boot_id", all.x = T, allow.cartesian = T)
-  df[cal_time > trt_time-1 & is.na(wt), wt := wt_trt]
-  df[ , wt_trt := NULL]
+  
+  dt_cleaned<- dt_cleaned %>% select(boot_id,wt, cal_time)
+  df_ipw_pp <- merge(dat,dt_cleaned,by= c("boot_id", 'cal_time'),all.x =T)
+  df_ipw_pp <- df_ipw_pp %>%
+    group_by(boot_id) %>%
+    fill(wt, .direction = "down") %>%
+    ungroup()
+  
+  df_ipw_pp<-df_ipw_pp %>% filter(A0 == trt)
+  
+  ##ITT 
+  dt_cleaned <- dat%>% filter(cal_time == 0)
+  
+  A         <- dt_cleaned$trt
+  mat_num   <- model.matrix(~ 1, dt_cleaned)
+  mat_denom <- model.matrix(~ L, dt_cleaned)
+  
+  num_mod   <- fastglm(mat_num,   A, family = binomial("logit"))
+  denom_mod <- fastglm(mat_denom, A, family = binomial("logit"))
+  
+  dt_cleaned[, ipw_num   := predict(num_mod,   mat_num,   type = "response")]
+  dt_cleaned[, ipw_denom := predict(denom_mod, mat_denom, type = "response")]
+  dt_cleaned[, wt := ifelse(trt == 1,
+                            ipw_num / ipw_denom,
+                            (1 - ipw_num) / (1 - ipw_denom))]
+  
+  dt_cleaned<- dt_cleaned %>% select(boot_id,wt)
+  df_ipw_itt <- merge(dat,dt_cleaned,by= "boot_id")
 
-  return(df)
+  return(list(df_ipw_pp = df_ipw_pp,
+              df_ipw_itt = df_ipw_itt))
 }
 
 run_ipw <- function(dt) {
-  
-  dat <- copy(dt)  
+  #PP 
+  dat <- dt   # IMPORTANT: data.table modifies by reference without this
   
   dt_cleaned <- dat[, trt_time := which(trt == 1)[1], by = id]
   dt_cleaned <- dt_cleaned[cal_time <= trt_time -1 | is.na(trt_time) ]
@@ -240,27 +265,50 @@ run_ipw <- function(dt) {
   dt_cleaned[, wt := ifelse(trt == 1,
                             ipw_num / ipw_denom,
                             (1 - ipw_num) / (1 - ipw_denom))]
-  df <- merge(dat,dt_cleaned[, .(id,cal_time,wt)],by = c("cal_time","id"), all.x = T, allow.cartesian = T)
+  #keep only 
+  dt_cleaned<- dt_cleaned %>% select(id,wt, cal_time)
+  df_ipw_pp <- merge(dat,dt_cleaned,by= c("id", 'cal_time'),all.x =T)
+  df_ipw_pp <- df_ipw_pp %>%
+    group_by(id) %>%
+    fill(wt, .direction = "down") %>%
+    ungroup()
   
-  #bc the model is built with new initators, we need to merge it back with all trt =1
-  trt_wt <- dt_cleaned[cal_time == trt_time-1, .(id, wt_trt = wt)]
-  df <- merge(df, trt_wt, by = "id", all.x = T, allow.cartesian = T)
-  df[cal_time > trt_time-1 & is.na(wt), wt := wt_trt]
-  df[ , wt_trt := NULL]
+  df_ipw_pp<-df_ipw_pp %>% filter(A0 == trt)
   
-  return(df)
+  ##ITT 
+  dt_cleaned <- dt%>% filter(cal_time == 0)
+  
+  A         <- dt_cleaned$trt
+  mat_num   <- model.matrix(~ 1, dt_cleaned)
+  mat_denom <- model.matrix(~ L, dt_cleaned)
+  
+  num_mod   <- fastglm(mat_num,   A, family = binomial("logit"))
+  denom_mod <- fastglm(mat_denom, A, family = binomial("logit"))
+  
+  dt_cleaned[, ipw_num   := predict(num_mod,   mat_num,   type = "response")]
+  dt_cleaned[, ipw_denom := predict(denom_mod, mat_denom, type = "response")]
+  dt_cleaned[, wt := ifelse(trt == 1,
+                            ipw_num / ipw_denom,
+                            (1 - ipw_num) / (1 - ipw_denom))]
+  
+  dt_cleaned<- dt_cleaned %>% select(id,wt)
+  df_ipw_itt <- merge(dt,dt_cleaned,by= "id")
+  
+  return(list(df_ipw_pp = df_ipw_pp,
+              df_ipw_itt = df_ipw_itt))
 }
 
 # ── STAGE 5: Pooled logistic regression ───────────────────────────────────────
 run_pooled_lr <- function(dt_ipw) {
 
-  frm <- ~trt + cal_time + cal_timesqr + trt:cal_time + trt:cal_timesqr
+  frm <- ~ trt + cal_time + cal_timesqr + trt:cal_time + trt:cal_timesqr
   mat <- model.matrix(frm, dt_ipw)
 
   model <- fastglm(x       = mat,
                    y       = dt_ipw$outcome,
                    weights = dt_ipw$wt,
                    family  = binomial(link = "logit"))
+  exp(model$coefficients)
   
   tp    <- 0:(MAX_TIME - 1)
   notrt <- data.table(trt = 0L, cal_time = tp, cal_timesqr = tp^2)

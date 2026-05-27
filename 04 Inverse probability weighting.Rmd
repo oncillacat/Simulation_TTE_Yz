@@ -2,6 +2,7 @@
 title: "04 Iverse probability weighting"
 author: "Yuze Zheng"
 date: "2026-02-20"
+update_date: !r paste("Updated on:", format(Sys.time(), '%d %B, %Y'))
 output: html_document
 ---
 ```{r setup}
@@ -17,13 +18,15 @@ keep <- c('dt','res_trad')
 rm(list = setdiff(ls(), keep))
 ```
 
+#PP
 # Step1: data cleaning remove all the trtment after intional treatment 
 ```{r}
 dt_cleaned <- dt[, trt_time := which(trt == 1)[1], by = id]
-dt_cleaned <- dt_cleaned[cal_time <= trt_time | is.na(trt_time) == T]
+dt_cleaned <- dt_cleaned[cal_time <= trt_time -1 | is.na(trt_time) == T]
 ```
 
 ```{r,fig.height=5,fig.width=6}
+# this is san check for how many new initation in the world 
 dt_cleaned %>% select(trt, cal_time)%>% group_by(cal_time)%>% summarise(per_A = sum(trt)/100000) %>% 
   plot(main = "Proportion of \n Treatment Initiation Overtime ",
        sub = 'under assumption n = 100,000',
@@ -60,36 +63,42 @@ dt_cleaned$wt <- ifelse(dt_cleaned$trt == 1,
                         (1 - dt_cleaned$ipw.num) / (1 - dt_cleaned$ipw.denom))
 ```
 
-we can not visualize the result of IPW weighting here because there are too many control too less treatment
-
-#merge 
+#Step5: cleaning remove date 
 ```{r}
-df <- merge(
-  dt,
-  dt_cleaned[, .(id,cal_time,wt)],
-  by = c("id", "cal_time"),
-  all.x = TRUE
-)
+dt_ipw_pp<- dt_cleaned %>% filter(cal_time >0 & trt == 0)
 ```
 
-#fill all NA to the time they are getting treated 
+##ITT 
+#filter for only initators
 ```{r}
-trt_wt <- dt_cleaned[cal_time == trt_time, .(id, wt_trt = wt)]
-df <- merge(df, trt_wt, by = "id", all.x = TRUE)
-df[cal_time > trt_time & is.na(wt), wt := wt_trt]
-df[, wt_trt := NULL]
+dt_cleaned <- dt%>% filter(cal_time == 0)
+```
+#building model matrix 
+```{r}
+mat_boot_numA <- model.matrix(~ 1, dt_cleaned)
+A <- dt_cleaned$trt
+numprobA <- fastglm(x = mat_boot_numA,
+                    y = A,
+                    family = binomial(link = "logit"))
+
+mat_boot_denomA <- model.matrix( ~ L , dt_cleaned)
+denomprobA <- fastglm(x = mat_boot_denomA,
+                        y = A,
+                        family = binomial(link = "logit"))
 ```
 
+#weight estimation
 ```{r}
-ggplot(df, aes(x = wt, fill = as.factor(trt))) +
-  geom_density(alpha = 0.5, colour = "grey50") +
-  geom_rug() +
-  ggtitle("Distribution of inverse probability weights")
+dt_cleaned$ipw.num <- predict(numprobA, mat_boot_numA, type = "response")
+dt_cleaned$ipw.denom <- predict(denomprobA, mat_boot_denomA, type = "response")
+dt_cleaned$wt <- ifelse(dt_cleaned$trt == 1,
+                        dt_cleaned$ipw.num / dt_cleaned$ipw.denom,
+                        (1 - dt_cleaned$ipw.num) / (1 - dt_cleaned$ipw.denom))
 ```
 
+#data merge
 ```{r}
-dt_IPW <- df
+dt_cleaned<- dt_cleaned %>% select(id,wt)
+df_ipw_itt <- merge(dt,dt_cleaned,by= "id")
 ```
-
-
 

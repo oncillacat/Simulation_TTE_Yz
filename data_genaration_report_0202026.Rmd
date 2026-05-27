@@ -36,6 +36,7 @@ A <- c(beta_0_A = -1.5,
 
 Y <- c(beta_0_Y = -6,
        beta_t_Y = 0.01 ,
+       beta_L_Y =0.5,
        beta_t2_Y = 0,
        beta_A_Y = 0,
        beta_tA_Y = 0,

@@ -7,7 +7,6 @@ output: html_document
 
 ```{r setup}
 library(fastglm)
-library(data.table)
 library(ggplot2)
 library(dplyr)
 ```
@@ -30,7 +29,6 @@ mat_boot <- model.matrix(
   ~ trt + cal_time + cal_timesqr + trt:cal_time + trt:cal_timesqr ,
   dt_IPW
 )
-
 # Define the outcome variable 
 Y <- dt_IPW$outcome
 # Extract weights (likely inverse probability weights)
