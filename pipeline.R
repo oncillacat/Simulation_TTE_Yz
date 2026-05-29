@@ -23,16 +23,21 @@ N_BOOT   <- 100   # number of bootstrap iterations
 generate_data <- function(
     nsim     = 100000,
     K        = 60,
-    A_params = c(-1.5, 0,5, -4.8, 0),       # beta_0_A, beta_L_A, beta_t_A, beta_t2_A
-    Y_params = c(-6, 0.01, 0.5, 0, 0, 0,0)  # beta_0_Y , beta_t_Y  ,beta_L_Y,
-                                            # beta_t2_Y ,beta_A_Y,beta_tA_Y, beta_t2A_Y
+    
+    # Individual parameter inputs (backward compatibility)
+    beta_0_A = NULL, beta_L_A = NULL,beta_t_A = NULL, beta_t2_A =NULL,
+    beta_0_Y = NULL, beta_t_Y = NULL, beta_L_Y = NULL, 
+    beta_t2_Y = NULL,beta_A_Y = NULL, beta_tA_Y = NULL, beta_t2A_Y = NULL 
 ) {
-  beta_0_A  <- A_params[1]; beta_L_A  <- A_params[2]
-  beta_t_A  <- A_params[3]; beta_t2_A <- A_params[4]
-  beta_0_Y  <- Y_params[1]; beta_t_Y  <- Y_params[2]
-  beta_L_Y <- Y_params[3]; beta_t2_Y  <- Y_params[4]
-  beta_A_Y <- Y_params[5]; beta_tA_Y<- Y_params[6]
-  beta_t2A_Y <- Y_params[7]
+  required_params <- c("beta_0_A", "beta_L_A","beta_t_A","beta_t2_A", "beta_0_Y", "beta_t_Y","beta_L_Y",
+                       "beta_t2_Y", "beta_A_Y", "beta_tA_Y", "beta_t2A_Y"
+  )
+  
+  for (param in required_params) {
+    if (is.null(get(param))) {
+      stop(paste("Parameter", param, "must be provided either individually or through vector input"))
+    }
+  }
 
   dt <- CJ(id = 1:nsim, time = 0:(K - 1))
 
