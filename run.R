@@ -8,23 +8,25 @@ library(broom)
 library(tidyr)
 library(ggplot2)
 library(parallel)
-library(pbmcapply)  # install.packages("pbmcapply")
+library(pbmcapply)  
 
 source("pipeline.R") 
 logit_ps <- function(p) log(p / (1 - p))   # used in PSM caliper
 MAX_TIME <- 60    # end of study (month 59 = last time point)
 N_BOOT   <- 100   # number of bootstrap iterations
 nsim <- 100000
-dt <- read.csv('T100528A.csv')
+
+
+dt <- read.csv('T070529A.csv')
 dt<-dt[,-1]
 setDT(dt)
-#method traditional
-#----method traditional----
+
+####data generation ####
 dt <- generate_data( nsim     = 100000,
                      K        = 60,
                      beta_0_A = -1.9, beta_L_A = 0.5,beta_t_A = -4.8, beta_t2_A =0,
                      beta_0_Y = -6, beta_t_Y = 0.01, beta_L_Y = 0.5, 
-                     beta_t2_Y = 0,beta_A_Y = 0, beta_tA_Y = 0, beta_t2A_Y = 0)
+                     beta_t2_Y = 0,beta_A_Y = log(0.4), beta_tA_Y = 0, beta_t2A_Y = 0)
 # %Y by time 
 Per_Y <- dt[,
    .(new_events = sum(outcome, na.rm = TRUE)),
@@ -60,14 +62,10 @@ p2 <- Per_A %>%
   labs(title = "Cumulative Proportion of \n Treatment Initiation Overtime ",
        y =" Percentage of Initiation (%)",
        x = "Time after eligible (Month)", ylim = c(0,1))
-write.csv(dt,"T100528A.csv")
+#write.csv(dt,"T040530A.csv")
 
-#load("dt.RData") 
-#data saved in 03232026 used in all presentations with RR = 1
-#pipeline create all 5 run and mark max_60 = 60 + N_boot =100 
-#Note to self: delete max_60 = 60 + N_boot =100 if we don't use them in the end 
-#* @param dt this is the only input
 
+####analysis start####
 ps_res<- run_psm(dt)
 ps_matched <- ps_res$ps_matched
 df_ps <- ps_res$df
@@ -77,7 +75,11 @@ res_lr <- data.table(bsample = NULL,
                      RD_t59_itt  = NULL,
                      RR_t59_itt  = NULL,
                      RD_t59_pp  = NULL,
-                     RD_t59_pp  = NULL)
+                     RD_t59_pp  = NULL,
+                     risk_trt_itt = NULL,
+                     risk_non_trt_itt = NULL,
+                     risk_trt_pp = NULL,
+                     risk_non_trt_pp = NULL)
 one_boot <- function(i) {
   unique_ids  <- unique(dt$id)
   sampled_ids <- sample(unique_ids, size = length(unique_ids), replace = TRUE)
@@ -93,7 +95,11 @@ one_boot <- function(i) {
     RD_t59_itt = lr_res_itt[cal_time == 59, RD],
     RR_t59_itt = lr_res_itt[cal_time == 59, RR],
     RR_t59_pp  = lr_res_pp[cal_time == 59, RR],
-    RD_t59_pp  = lr_res_pp[cal_time == 59, RD]
+    RD_t59_pp  = lr_res_pp[cal_time == 59, RD],
+    risk_trt_itt = lr_res_itt[cal_time == 59, cuminc_trt],
+    risk_non_trt_itt = lr_res_itt[cal_time == 59, cuminc_notrt],
+    risk_trt_pp = lr_res_pp[cal_time == 59, cuminc_trt],
+    risk_non_trt_pp = lr_res_pp[cal_time == 59, cuminc_notrt]
   )
 }
 
@@ -116,15 +122,34 @@ df_ipw_itt<- res_ipw$df_ipw_itt
 lr_res_itt <- run_pooled_lr(df_ipw_itt)
 
 #---- result extract -----
-mod_pp <- cox_res$cox_pp
 mod_itt <- cox_res$cox_itt
+mod_pp <- cox_res$cox_pp
 #record log result remeber to exp
-exp(confint(mod_pp))
 exp(confint(mod_itt))
+exp(confint(mod_pp))
+
+mod_itt
+mod_pp
+
 # TTE method 
-quantile(res_lr$RR_t59_itt, probs = 0.025) 
-quantile(res_lr$RR_t59_itt, probs = 0.975)
-quantile(res_lr$RR_t59_pp, probs = 0.025) 
-quantile(res_lr$RR_t59_pp, probs = 0.975)
-lr_res_pp$RR[60]
+c(quantile(res_lr$RR_t59_itt, probs = 0.025),quantile(res_lr$RR_t59_itt, probs = 0.975))
 lr_res_itt$RR[60]
+c(quantile(res_lr$RR_t59_pp, probs = 0.025) ,quantile(res_lr$RR_t59_pp, probs = 0.975))
+lr_res_pp$RR[60]
+
+#RD TTE
+c(quantile(res_lr$RD_t59_itt, probs = 0.025),quantile(res_lr$RD_t59_itt, probs = 0.975))
+res_lr$RD_t59_itt[60]
+c(quantile(res_lr$RD_t59_pp, probs = 0.025),quantile(res_lr$RD_t59_pp, probs = 0.975))
+res_lr$RD_t59_pp[60]
+#risk ITT TTE
+c(quantile(res_lr$risk_non_trt_itt, probs = 0.025),quantile(res_lr$risk_non_trt_itt, probs = 0.975))
+res_lr$risk_non_trt_itt[60]
+c(quantile(res_lr$risk_trt_itt, probs = 0.025),quantile(res_lr$risk_trt_itt, probs = 0.975))
+res_lr$risk_trt_itt[60]
+#risk PP TTE
+c(quantile(res_lr$risk_non_trt_pp, probs = 0.025),quantile(res_lr$risk_non_trt_pp, probs = 0.975))
+res_lr$risk_non_trt_pp[60]
+c(quantile(res_lr$risk_trt_pp, probs = 0.025),quantile(res_lr$risk_trt_pp, probs = 0.975))
+res_lr$risk_trt_pp[60]
+
