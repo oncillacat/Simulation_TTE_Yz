@@ -55,7 +55,7 @@ ps_matched <- ps_matched %>%
 
 # ── 4b. Compute follow-up time and outcome flag ──────────────────────────────
 ```{r}
-max_time <- 60 # end of study = last observed time point
+max_time <- 59 # end of study = last observed time point
 
 ps_matched <- ps_matched %>%
   mutate(

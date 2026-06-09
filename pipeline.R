@@ -47,7 +47,7 @@ generate_data <- function(
 
   dt[, `:=`(t2 = time^2, tstart = time, tstop = time + 1)]
   dt[, Astar := fifelse(A0 == 0 & time > 0,
-                        rbinom(.N, 1, plogis(beta_t_A)), 0)]
+                        rbinom(.N, 1, plogis(beta_t_A+ beta_L_A * L + beta_t2_A * t2)), 0)]
   dt[, trt_time := ifelse(A0 == 1, 0, which(Astar == 1)[1]), by = id]
   dt[, A := fifelse(A0 == 1, 1,
              fifelse(!is.na(trt_time) & time >= trt_time, 1, 0))]
@@ -55,8 +55,10 @@ generate_data <- function(
   dt <- dt %>% mutate(across(A, ~replace_na(.x, 0)))
 
   dt[, Ystar := rbinom(nsim * K, 1, plogis(
-    beta_0_Y + beta_t_Y * time + beta_t2_Y * t2 +
-      beta_A_Y * A + beta_tA_Y * time * A + beta_t2A_Y * t2 * A))]
+    beta_0_Y + beta_L_Y * L +
+      beta_t_Y * time + beta_t2_Y * t2 +
+      beta_A_Y * A + beta_tA_Y * time * A +
+      beta_t2A_Y * t2 * A))]
   dt[, event_time := which(Ystar == 1)[1], by = id]
   dt <- dt[time < event_time | is.na(event_time)][, event_time := NULL]
 
@@ -156,21 +158,21 @@ run_cox <- function(ps_matched, df) {
 
   max_time <- MAX_TIME
 
-  ps_matched <- ps_matched %>%
-    mutate(
-      pp_censor_time = ifelse(trt == 0, trt_start_time, NA_real_),
-      end_time = pmin(
-        ifelse(had_event, event_time, max_time),
-        ifelse(!is.na(pp_censor_time), pp_censor_time, max_time),
-        na.rm = TRUE),
-      end_ITT    = ifelse(had_event, event_time, max_time),
-      follow_up  = end_time - index_date + 1,
-      follow_ITT = end_ITT  - index_date + 1,
-      outcome_flag = as.integer(
-        had_event &
-          (trt == 1 | is.na(trt_start_time) | event_time <= trt_start_time)),
-      outcome_ITT  = as.integer(had_event)
-    )
+  ps_matched<- ps_matched %>%
+  mutate(
+    pp_censor_time = ifelse(trt == 0, trt_start_time, NA_real_),
+    end_time = pmin(
+      ifelse(had_event, event_time, max_time),
+      ifelse(!is.na(pp_censor_time), pp_censor_time, max_time),
+      na.rm = TRUE),
+    end_ITT    = ifelse(had_event, event_time, max_time),
+    follow_up  = end_time - index_date + 1,
+    follow_ITT = end_ITT  - index_date + 1,
+    outcome_flag = as.integer(
+      had_event &
+        (trt == 1 | is.na(trt_start_time) | event_time <= trt_start_time)),
+    outcome_ITT  = as.integer(had_event)
+  )
 
   # per-protocol Cox
   cox_pp <- coxph(
@@ -182,18 +184,12 @@ run_cox <- function(ps_matched, df) {
     Surv(follow_ITT, outcome_ITT) ~ trt + strata(pair_id) + cluster(id),
     data = ps_matched, ties = "efron")
 
-  # KM curves at each time point (for bootstrap CI bands)
-  km <- survfit(Surv(follow_up, outcome_flag) ~ trt, data = ps_matched)
-  km_summary <- summary(km, times = 0:(max_time - 1))
-
   return(list(
     hr_pp    = exp(coef(cox_pp)),           # single HR for bootstrap collection
     hr_itt   = exp(coef(cox_itt)),
     cox_pp   = cox_pp,                      # full model if needed
     cox_itt  = cox_itt,
-    km_times = km_summary$time,
-    km_surv  = km_summary$surv,
-    km_strata= km_summary$strata
+    ps_matched = ps_matched
   ))
 }
 
@@ -315,7 +311,7 @@ run_pooled_lr <- function(dt_ipw) {
                    family  = binomial(link = "logit"))
   exp(model$coefficients)
   
-  tp    <- 0:(MAX_TIME - 1)
+  tp    <- 0:(MAX_TIME)
   notrt <- data.table(trt = 0L, cal_time = tp, cal_timesqr = tp^2)
   trtd  <- data.table(trt = 1L, cal_time = tp, cal_timesqr = tp^2)
   

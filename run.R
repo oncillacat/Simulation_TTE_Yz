@@ -7,26 +7,25 @@ library(survival)
 library(broom)
 library(tidyr)
 library(ggplot2)
-library(parallel)
 library(pbmcapply)  
 
 source("pipeline.R") 
 logit_ps <- function(p) log(p / (1 - p))   # used in PSM caliper
-MAX_TIME <- 60    # end of study (month 59 = last time point)
+MAX_TIME <- 59    # end of study (month 59 = last time point)
 N_BOOT   <- 100   # number of bootstrap iterations
 nsim <- 100000
 
 
-dt <- read.csv('T070529A.csv')
-dt<-dt[,-1]
-setDT(dt)
+#dt <- read.csv('T070529A.csv')
+#dt<-dt[,-1]
+#setDT(dt)
 
 ####data generation ####
 dt <- generate_data( nsim     = 100000,
                      K        = 60,
                      beta_0_A = -1.9, beta_L_A = 0.5,beta_t_A = -4.8, beta_t2_A =0,
                      beta_0_Y = -6, beta_t_Y = 0.01, beta_L_Y = 0.5, 
-                     beta_t2_Y = 0,beta_A_Y = log(0.4), beta_tA_Y = 0, beta_t2A_Y = 0)
+                     beta_t2_Y = 0,beta_A_Y = 0, beta_tA_Y = 0, beta_t2A_Y = 0)
 # %Y by time 
 Per_Y <- dt[,
    .(new_events = sum(outcome, na.rm = TRUE)),
@@ -62,14 +61,14 @@ p2 <- Per_A %>%
   labs(title = "Cumulative Proportion of \n Treatment Initiation Overtime ",
        y =" Percentage of Initiation (%)",
        x = "Time after eligible (Month)", ylim = c(0,1))
-#write.csv(dt,"T040530A.csv")
+write.csv(dt,"T100609B.csv")
 
 
 ####analysis start####
 ps_res<- run_psm(dt)
 ps_matched <- ps_res$ps_matched
 df_ps <- ps_res$df
-cox_res <- run_cox(ps_matched,df_ps) # a list of hr, km curve, include both ITT & AT treatment 
+cox_res <- run_cox(ps_matched,df_ps) # a list of hr, include both ITT & AT treatment 
 
 res_lr <- data.table(bsample = NULL,
                      RD_t59_itt  = NULL,
@@ -80,6 +79,7 @@ res_lr <- data.table(bsample = NULL,
                      risk_non_trt_itt = NULL,
                      risk_trt_pp = NULL,
                      risk_non_trt_pp = NULL)
+
 one_boot <- function(i) {
   unique_ids  <- unique(dt$id)
   sampled_ids <- sample(unique_ids, size = length(unique_ids), replace = TRUE)
