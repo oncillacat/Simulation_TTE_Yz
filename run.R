@@ -25,7 +25,7 @@ dt <- generate_data( nsim     = 100000,
                      K        = 60,
                      beta_0_A = -1.9, beta_L_A = 0.5,beta_t_A = -4.8, beta_t2_A =0,
                      beta_0_Y = -6, beta_t_Y = 0.01, beta_L_Y = 0.5, 
-                     beta_t2_Y = 0,beta_A_Y = 0, beta_tA_Y = 0, beta_t2A_Y = 0)
+                     beta_t2_Y = 0,beta_A_Y = log(0.4), beta_tA_Y = 0, beta_t2A_Y = 0)
 # %Y by time 
 Per_Y <- dt[,
    .(new_events = sum(outcome, na.rm = TRUE)),
@@ -61,7 +61,7 @@ p2 <- Per_A %>%
   labs(title = "Cumulative Proportion of \n Treatment Initiation Overtime ",
        y =" Percentage of Initiation (%)",
        x = "Time after eligible (Month)", ylim = c(0,1))
-write.csv(dt,"T100609B.csv")
+write.csv(dt,"T040609A.csv")
 
 
 ####analysis start####
